@@ -1,0 +1,17 @@
+[
+  {
+    "module": "investor/login",
+    "document": "OTP screen intermittently takes 4-5 seconds to load on UAT. Tests that assert OTP input visibility immediately after login can flake — always wait explicitly for the OTP screen before interacting with it.",
+    "confidence": 0.9
+  },
+  {
+    "module": "investor/login",
+    "document": "The Login button's visible label changes momentarily from 'Login' to 'Signing in...' right after click. Selectors based on exact button text can fail transiently — prefer waiting for navigation or a stable attribute instead.",
+    "confidence": 0.85
+  },
+  {
+    "module": "investor/login",
+    "document": "The OTP input field's layout shifts slightly on first render depending on network speed, which has caused a small number of flaky selector failures on the OTP input in past runs.",
+    "confidence": 0.7
+  }
+]

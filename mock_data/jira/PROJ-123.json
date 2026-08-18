@@ -1,0 +1,17 @@
+{
+  "id": "PROJ-123",
+  "key": "PROJ-123",
+  "fields": {
+    "summary": "Fix OTP not triggering for investor login on new device",
+    "description": "Investors logging in from a device that has not been used before are expected to receive an OTP challenge before being granted access to the portal. Several retail and NRI investors have reported that after entering valid credentials on a new device, the portal redirects straight to the dashboard without ever presenting the OTP screen, bypassing the intended second factor.\n\nThe issue was first reported on the UAT environment on 2026-08-05 and has since been reproduced intermittently on the new-device login path for retail_investor and nri_investor account types. Institutional investor accounts, which use a separate SSO flow, are not affected. Server logs show that the /login endpoint is correctly returning is_new_device: true in roughly 70% of new-device attempts, but the frontend does not consistently route to the OTP screen when that flag is set.\n\nThis is a P1 issue because it silently weakens authentication for a security-sensitive flow. The fix must ensure the OTP screen is reliably shown whenever is_new_device is true, and that existing device logins remain unaffected. QA needs to validate both the happy-path OTP trigger and the surrounding edge cases (expired OTP, invalid OTP, resend) before this can be signed off for UAT.",
+    "labels": ["investor", "login", "otp", "frontend"],
+    "issuetype": {
+      "name": "Bug"
+    },
+    "acceptance_criteria": [
+      "When a retail or NRI investor logs in with valid credentials from a device not previously seen, the OTP screen must be displayed before dashboard access is granted.",
+      "When the same investor logs in again from a previously verified device, no OTP screen should be shown and the user should land directly on the dashboard.",
+      "OTP verification must correctly handle valid OTP (success), expired OTP (error + resend option), and invalid OTP (error, no lockout until 5 attempts)."
+    ]
+  }
+}

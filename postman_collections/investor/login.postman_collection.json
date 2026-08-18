@@ -1,0 +1,86 @@
+{
+  "info": {
+    "name": "Investor Login",
+    "_postman_id": "b6f2e3a0-investor-login-0001",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "POST /api/v1/investor/login",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"retail.investor@uat.example.com\",\n  \"password\": \"Test@1234\",\n  \"device_id\": \"{{device_id}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/investor/login",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "investor", "login"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Response has token', function () {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body).to.have.property('token');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": []
+    },
+    {
+      "name": "POST /api/v1/investor/verify-otp",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"otp\": \"123456\",\n  \"session_token\": \"{{session_token}}\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/investor/verify-otp",
+          "host": ["{{base_url}}"],
+          "path": ["api", "v1", "investor", "verify-otp"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Response has auth_token', function () {",
+              "    const body = pm.response.json();",
+              "    pm.expect(body).to.have.property('auth_token');",
+              "});"
+            ]
+          }
+        }
+      ],
+      "response": []
+    }
+  ],
+  "variable": [
+    { "key": "base_url", "value": "https://uat.example.com" },
+    { "key": "device_id", "value": "uat-test-device-001" },
+    { "key": "session_token", "value": "" }
+  ]
+}

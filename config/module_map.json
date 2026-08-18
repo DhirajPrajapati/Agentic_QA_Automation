@@ -1,0 +1,13 @@
+{
+  "investor": {
+    "login": "investor_login",
+    "otp": "investor_login",
+    "dashboard": "investor_dashboard"
+  },
+  "distributor": {
+    "login": "distributor_login"
+  },
+  "employee": {
+    "login": "employee_login"
+  }
+}

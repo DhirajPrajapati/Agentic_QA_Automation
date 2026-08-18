@@ -1,0 +1,122 @@
+=====================================================
+CONFLUENCE PAGE (MOCK) — Investor Login Module
+=====================================================
+
+1. PAGE METADATA
+-----------------
+Page ID: investor_login
+Space: PMS Portal Knowledge Base
+Related Jira labels: investor, login, otp
+Owner: Investor Portal Squad
+Last reviewed: 2026-07-28
+
+2. MODULE OVERVIEW
+-------------------
+The Investor Login module authenticates retail, institutional, and NRI
+investors into the Portfolio Management System (PMS) portal. It combines a
+standard email/password check with a device-aware OTP step: logins from a
+device the account has not used before must pass a One-Time-Password
+challenge before reaching the dashboard. Logins from a previously verified
+device skip the OTP step entirely.
+
+3. USER ROLES
+--------------
+- retail_investor: individual investors, most common role, full OTP flow applies.
+- institutional_investor: corporate accounts, authenticate via SSO, OTP flow
+  does not apply.
+- nri_investor: non-resident Indian investors, same OTP flow as retail, plus
+  an additional country-code check on the phone number used for OTP delivery.
+
+4. URLS AND NAVIGATION
+------------------------
+UAT login page:      https://uat.example.com/investor/login
+UAT OTP page:         https://uat.example.com/investor/verify-otp
+UAT dashboard:         https://uat.example.com/investor/dashboard
+UAT forgot password:  https://uat.example.com/investor/forgot-password
+
+5. HAPPY PATH FLOWS
+---------------------
+Standard login flow (existing device):
+  1. Investor navigates to /investor/login
+  2. Enters registered email and password
+  3. Clicks "Login"
+  4. Backend recognises the device fingerprint as previously verified
+  5. Investor is redirected directly to /investor/dashboard
+
+OTP flow (new device):
+  1. Investor navigates to /investor/login
+  2. Enters registered email and password
+  3. Clicks "Login"
+  4. Backend returns is_new_device: true
+  5. Frontend routes to /investor/verify-otp
+  6. Investor enters the 6-digit OTP sent via SMS/email
+  7. Clicks "Verify"
+  8. On success, investor is redirected to /investor/dashboard and the
+     device is marked as verified for future logins
+
+6. EDGE CASES (exact error message text)
+-------------------------------------------
+- Invalid password:
+  "Invalid email or password. Please try again."
+- Account locked (5 failed attempts):
+  "Your account has been locked due to multiple failed attempts. Please reset your password."
+- Expired OTP (OTP older than 5 minutes):
+  "This OTP has expired. Please request a new one."
+- Invalid OTP (wrong code, attempts remaining):
+  "The OTP you entered is incorrect. Please try again."
+- OTP resend cooldown (resend requested within 30s of last send):
+  "Please wait 30 seconds before requesting another OTP."
+
+7. API ENDPOINTS
+------------------
+POST /api/v1/investor/login
+  Request:  { "email": string, "password": string, "device_id": string }
+  Success:  200 { "token": string, "is_new_device": boolean }
+  Failures: 401 { "error": "invalid_credentials" }
+            423 { "error": "account_locked" }
+
+POST /api/v1/investor/verify-otp
+  Request:  { "otp": string, "session_token": string }
+  Success:  200 { "auth_token": string }
+  Failures: 410 { "error": "otp_expired" }
+            400 { "error": "otp_invalid" }
+
+POST /api/v1/investor/forgot-password
+  Request:  { "email": string }
+  Success:  200 { "message": "reset_link_sent" }
+  Failures: 404 { "error": "account_not_found" }
+
+8. UI ELEMENT HINTS
+----------------------
+- Email input:        input[name="email"]
+- Password input:      input[name="password"]
+- Login button:        button:has-text("Login")  (NOTE: label changes to
+                        "Signing in..." briefly after click — do not assert
+                        on label text alone, wait for navigation instead)
+- OTP input:            input[name="otp"]
+- Resend button:       button:has-text("Resend OTP")
+
+9. TEST DATA
+--------------
+UAT credentials:
+  retail_investor:        retail.investor@uat.example.com / Test@1234
+  institutional_investor: inst.investor@uat.example.com / Test@1234
+  nri_investor:            nri.investor@uat.example.com / Test@1234
+Static UAT OTP (all accounts): 123456
+
+10. PREREQUISITES
+--------------------
+- UAT environment must be reachable at https://uat.example.com
+- Test accounts listed in Section 9 must already exist and be unlocked
+- Device fingerprint cache should be cleared before running new-device tests
+
+11. KNOWN ISSUES
+-------------------
+- OTP screen intermittently takes 4-5 seconds to load on UAT — do not assert
+  visibility without an explicit wait.
+- Login button label changes momentarily after click ("Login" -> "Signing in...").
+- OTP input layout shifts slightly on first render depending on network speed.
+
+12. CHANGELOG
+----------------
+2026-07-28 — Added NRI investor country-code check note to Section 3.
