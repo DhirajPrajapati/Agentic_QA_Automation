@@ -37,6 +37,9 @@ class QAState(TypedDict):
     errors: list
     current_phase: str
 
+    # Attachment — written by test_case_agent after generation
+    tc_attachment_name: Optional[str]   # Jira attachment filename
+
 
 def create_initial_state(jira_id: str) -> QAState:
     """Build a fresh QAState for a new pipeline run, keyed by jira_id."""
@@ -58,4 +61,5 @@ def create_initial_state(jira_id: str) -> QAState:
         retry_count=0,
         errors=[],
         current_phase="init",
+        tc_attachment_name=None,
     )

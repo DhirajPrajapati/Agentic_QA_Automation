@@ -7,6 +7,7 @@ Mock-safe: yes
 import logging
 import os
 from datetime import datetime
+from typing import Optional
 
 from graph.state import QAState
 from tools.chromadb_client import write_learning
@@ -56,6 +57,7 @@ def _build_jira_comment(
     api_pass: int,
     api_fail: int,
     errors: list,
+    tc_attachment: Optional[str],
 ) -> str:
     """Build the formatted Jira comment summarizing the full run."""
     comment_lines = [
@@ -105,6 +107,14 @@ def _build_jira_comment(
     overall = (
         "✅ All tests passed" if ui_fail == 0 and api_fail == 0 else f"❌ {ui_fail + api_fail} test(s) failed"
     )
+
+    # Reference the attachment posted earlier by test_case_agent
+    if tc_attachment:
+        comment_lines.append("")
+        comment_lines.append(
+            f"📎 Test cases attached at start of run: {tc_attachment}"
+        )
+
     comment_lines.append("")
     comment_lines.append(f"Overall: {overall}")
     comment_lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -139,6 +149,7 @@ def reporter_node(state: QAState) -> QAState:
         api_pass,
         api_fail,
         state.get("errors") or [],
+        state.get("tc_attachment_name"),
     )
 
     if use_mock:
