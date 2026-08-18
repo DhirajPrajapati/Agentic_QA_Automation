@@ -1,6 +1,7 @@
 """
-llm_client — Wrapper for Azure OpenAI / OpenAI LLM calls with mock support
-and retry logic. Provider selected via LLM_PROVIDER (azure|openai).
+llm_client — Wrapper for Azure OpenAI / OpenAI / org-gateway LLM calls with
+mock support and retry logic. Provider selected via LLM_PROVIDER
+(azure|openai|org_gateway).
 Part of: QA Orchestrator
 Phase: 1
 Mock-safe: yes
@@ -11,6 +12,7 @@ import os
 import time
 from typing import Optional
 
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,6 +22,7 @@ logger = logging.getLogger(__name__)
 USE_MOCK_LLM: bool = os.getenv("USE_MOCK_LLM", "true").lower() == "true"
 OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
 LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "azure").lower()
+ORG_LLM_ENDPOINT: str = os.getenv("ORG_LLM_ENDPOINT", "")
 
 api_key = os.getenv("OPENAI_API_KEY", "")
 if not api_key or api_key == "placeholder_add_org_key_later":
@@ -242,6 +245,13 @@ class LLMRetryError(RuntimeError):
     """Raised when the LLM call fails after all retry attempts are exhausted."""
 
 
+def _openai_retryable_errors() -> tuple[type[Exception], ...]:
+    """Lazily import OpenAI's retryable exception types (azure/openai providers only)."""
+    from openai import APIError, RateLimitError
+
+    return (RateLimitError, APIError)
+
+
 def _mock_invoke(agent_type: str) -> str:
     """Return the hardcoded mock response for the given agent type."""
     response = _MOCK_RESPONSES.get(agent_type, _MOCK_RESPONSES["generic"])
@@ -250,6 +260,40 @@ def _mock_invoke(agent_type: str) -> str:
         agent_type,
     )
     return response
+
+
+def _call_org_gateway(
+    messages: list[dict[str, str]],
+    max_tokens: int = 2000,
+    temperature: float = 0,
+) -> str:
+    """
+    Call the org's custom Azure OpenAI gateway endpoint via raw HTTP POST.
+
+    Bypasses the LangChain/Azure SDK: this gateway uses a custom body
+    format (a required stop field alongside standard params) and needs no
+    API key — auth is handled by the org network (Zscaler/VPN). Only used
+    when LLM_PROVIDER=org_gateway.
+    """
+    if not ORG_LLM_ENDPOINT:
+        raise ValueError(
+            "[llm_client] ORG_LLM_ENDPOINT not set in .env\n"
+            "Set it to the full endpoint URL provided by your org."
+        )
+
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stop": "None",
+    }
+
+    logger.info("[llm_client] Calling org gateway: %s...", ORG_LLM_ENDPOINT[:70])
+    response = requests.post(url=ORG_LLM_ENDPOINT, headers=headers, json=payload, timeout=60)
+    response.raise_for_status()
+    data = response.json()
+    return str(data["choices"][0]["message"]["content"])
 
 
 def _build_llm():
@@ -330,6 +374,9 @@ def _build_llm():
 
 def _real_invoke(messages: list[dict[str, str]]) -> str:
     """Call the configured LLM provider and return the response text content."""
+    if LLM_PROVIDER == "org_gateway":
+        return _call_org_gateway(messages)
+
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
     llm = _build_llm()
@@ -347,12 +394,15 @@ def invoke_with_retry(
     agent_type: str = "generic",
     max_attempts: int = 3,
 ) -> str:
-    """Invoke the LLM, retrying on transient OpenAI errors, or return a mock.
+    """Invoke the LLM, retrying on transient errors, or return a mock.
 
     When USE_MOCK_LLM=true (default), returns a hardcoded, valid-JSON mock
     response for agent_type with no network call and no API key required.
-    When USE_MOCK_LLM=false, calls OpenAI via ChatOpenAI, retrying on
-    RateLimitError/APIError with exponential backoff (1s, 2s, 4s).
+    When USE_MOCK_LLM=false, calls the provider selected by LLM_PROVIDER
+    (azure|openai|org_gateway), retrying on transient errors (rate limits,
+    502/503/429, timeouts, connection errors) with exponential backoff
+    (1s, 2s, 4s). Non-retryable HTTP errors (e.g. 400/401/404) raise
+    immediately.
 
     Reads USE_MOCK_LLM from the environment on every call (not just at
     import time) so a change to the env var takes effect immediately even
@@ -362,20 +412,40 @@ def invoke_with_retry(
     if use_mock_llm:
         return _mock_invoke(agent_type)
 
-    from openai import APIError, RateLimitError
-
+    provider = os.getenv("LLM_PROVIDER", "azure").lower()
     delay = 1.0
     last_error: Optional[Exception] = None
     for attempt in range(1, max_attempts + 1):
         try:
             logger.info(
-                "[llm_client] Attempt %d/%d — calling OpenAI model=%s",
+                "[llm_client] Attempt %d/%d — calling provider=%s agent_type=%s",
                 attempt,
                 max_attempts,
-                OPENAI_MODEL,
+                provider,
+                agent_type,
             )
             return _real_invoke(messages)
-        except (RateLimitError, APIError) as e:
+        except requests.exceptions.HTTPError as e:
+            status = e.response.status_code if e.response is not None else 0
+            if status not in (429, 502, 503):
+                logger.error("[llm_client] HTTP %s — not retrying: %s", status, str(e))
+                raise
+            last_error = e
+            logger.warning(
+                "[llm_client] Attempt %d/%d — HTTP %s, retrying", attempt, max_attempts, status
+            )
+            if attempt < max_attempts:
+                time.sleep(delay)
+                delay *= 2
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_error = e
+            logger.warning(
+                "[llm_client] Attempt %d/%d — network error: %s", attempt, max_attempts, str(e)
+            )
+            if attempt < max_attempts:
+                time.sleep(delay)
+                delay *= 2
+        except _openai_retryable_errors() as e:
             last_error = e
             logger.warning(
                 "[llm_client] Attempt %d/%d failed: %s", attempt, max_attempts, str(e)
