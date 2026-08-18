@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 USE_MOCK_LLM: bool = os.getenv("USE_MOCK_LLM", "true").lower() == "true"
 OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "azure").lower()
 
 api_key = os.getenv("OPENAI_API_KEY", "")
 if not api_key or api_key == "placeholder_add_org_key_later":
@@ -252,33 +253,79 @@ def _mock_invoke(agent_type: str) -> str:
 
 
 def _build_llm():
-    """Build the chat model for the configured LLM_PROVIDER.
-
-    Reads LLM_PROVIDER from the environment on every call (not just at
-    import time), matching the USE_MOCK_LLM pattern in invoke_with_retry.
-    "azure" builds AzureChatOpenAI (org default); anything else falls back
-    to standard ChatOpenAI.
     """
-    provider = os.getenv("LLM_PROVIDER", "azure").lower()
-    if provider == "azure":
+    Build Azure OpenAI client using org-provided endpoint.
+    No personal API key required — auth managed by org.
+
+    AZURE_AUTH_MODE=managed_identity → Azure AD DefaultAzureCredential (Scenario A)
+    AZURE_AUTH_MODE=gateway          → Org network gateway, no auth header (Scenario B)
+    """
+    if LLM_PROVIDER == "azure":
         from langchain_openai import AzureChatOpenAI
 
-        logger.info(
-            "[llm_client] Using Azure OpenAI — endpoint=%s deployment=%s",
-            os.getenv("AZURE_OPENAI_ENDPOINT", "not set"),
-            os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-        )
-        return AzureChatOpenAI(
-            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
-            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT") or None,
-            api_key=os.getenv("AZURE_OPENAI_API_KEY") or None,
-            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
-        )
+        endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+        deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+        api_ver = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+        auth_mode = os.getenv("AZURE_AUTH_MODE", "gateway").lower()
 
-    from langchain_openai import ChatOpenAI
+        if not endpoint:
+            raise ValueError(
+                "[llm_client] AZURE_OPENAI_ENDPOINT not set in .env\n"
+                "Ask your org for the Azure OpenAI endpoint URL."
+            )
 
-    logger.info("[llm_client] Using standard OpenAI model=%s", OPENAI_MODEL)
-    return ChatOpenAI(model=OPENAI_MODEL, api_key=api_key or None)
+        if auth_mode == "managed_identity":
+            # Scenario A — Azure AD managed identity
+            # Machine must be Azure AD joined or running in Azure
+            # Needs: pip install azure-identity
+            logger.info("[llm_client] Azure auth: managed identity (Azure AD)")
+            try:
+                from azure.identity import (
+                    DefaultAzureCredential,
+                    get_bearer_token_provider,
+                )
+
+                credential = DefaultAzureCredential()
+                token_provider = get_bearer_token_provider(
+                    credential,
+                    "https://cognitiveservices.azure.com/.default",
+                )
+                return AzureChatOpenAI(
+                    azure_deployment=deployment,
+                    azure_endpoint=endpoint,
+                    api_version=api_ver,
+                    azure_ad_token_provider=token_provider,
+                    temperature=0,
+                )
+            except ImportError:
+                raise ImportError(
+                    "[llm_client] azure-identity package not installed.\n"
+                    "Run: pip install azure-identity>=1.15.0"
+                )
+
+        else:
+            # Scenario B — org gateway manages auth at network level
+            # Endpoint just works when called from org network (Zscaler/VPN)
+            # api_key param required by SDK but intercepted/ignored by gateway
+            logger.info("[llm_client] Azure auth: org gateway (no personal API key)")
+            return AzureChatOpenAI(
+                azure_deployment=deployment,
+                azure_endpoint=endpoint,
+                api_version=api_ver,
+                api_key="org-managed",  # SDK requires this param — gateway ignores it
+                temperature=0,
+            )
+
+    else:
+        # Standard OpenAI fallback — only if LLM_PROVIDER=openai
+        from langchain_openai import ChatOpenAI
+
+        logger.info("[llm_client] Using standard OpenAI")
+        return ChatOpenAI(
+            model=os.getenv("OPENAI_MODEL", "gpt-4o"),
+            api_key=os.getenv("OPENAI_API_KEY"),
+            temperature=0,
+        )
 
 
 def _real_invoke(messages: list[dict[str, str]]) -> str:

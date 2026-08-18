@@ -6,6 +6,9 @@ langchain>=0.3.0
 langchain-openai>=0.3.0
 openai
 
+# Azure managed identity — needed if org uses Azure AD auth
+azure-identity>=1.15.0
+
 # === UI testing ===
 playwright>=1.45.0
 
