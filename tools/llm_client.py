@@ -1,5 +1,6 @@
 """
-llm_client — Wrapper for OpenAI LLM calls with mock support and retry logic.
+llm_client — Wrapper for Azure OpenAI / OpenAI LLM calls with mock support
+and retry logic. Provider selected via LLM_PROVIDER (azure|openai).
 Part of: QA Orchestrator
 Phase: 1
 Mock-safe: yes
@@ -22,6 +23,14 @@ OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
 api_key = os.getenv("OPENAI_API_KEY", "")
 if not api_key or api_key == "placeholder_add_org_key_later":
     logger.warning("[llm_client] No real OpenAI key set. LLM calls will fail.")
+
+# LLM_PROVIDER selects the real (non-mock) backend: "azure" (org default) or
+# "openai" (fallback). Only consulted by _build_llm() when USE_MOCK_LLM=false.
+_azure_key = os.getenv("AZURE_OPENAI_API_KEY", "")
+if os.getenv("LLM_PROVIDER", "azure").lower() == "azure" and (
+    not _azure_key or _azure_key == "placeholder_add_org_key_later"
+):
+    logger.warning("[llm_client] No real Azure OpenAI key set. LLM calls will fail.")
 
 # One hardcoded, realistic mock response per agent type — lets Phase 1-4
 # agents be built and run end-to-end before the org OpenAI key arrives.
@@ -242,12 +251,41 @@ def _mock_invoke(agent_type: str) -> str:
     return response
 
 
-def _real_invoke(messages: list[dict[str, str]]) -> str:
-    """Call OpenAI via ChatOpenAI and return the response text content."""
-    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+def _build_llm():
+    """Build the chat model for the configured LLM_PROVIDER.
+
+    Reads LLM_PROVIDER from the environment on every call (not just at
+    import time), matching the USE_MOCK_LLM pattern in invoke_with_retry.
+    "azure" builds AzureChatOpenAI (org default); anything else falls back
+    to standard ChatOpenAI.
+    """
+    provider = os.getenv("LLM_PROVIDER", "azure").lower()
+    if provider == "azure":
+        from langchain_openai import AzureChatOpenAI
+
+        logger.info(
+            "[llm_client] Using Azure OpenAI — endpoint=%s deployment=%s",
+            os.getenv("AZURE_OPENAI_ENDPOINT", "not set"),
+            os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
+        )
+        return AzureChatOpenAI(
+            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT") or None,
+            api_key=os.getenv("AZURE_OPENAI_API_KEY") or None,
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+        )
+
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model=OPENAI_MODEL, api_key=api_key or None)
+    logger.info("[llm_client] Using standard OpenAI model=%s", OPENAI_MODEL)
+    return ChatOpenAI(model=OPENAI_MODEL, api_key=api_key or None)
+
+
+def _real_invoke(messages: list[dict[str, str]]) -> str:
+    """Call the configured LLM provider and return the response text content."""
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    llm = _build_llm()
     role_to_message = {"system": SystemMessage, "assistant": AIMessage}
     lc_messages = [
         role_to_message.get(m.get("role", "user"), HumanMessage)(content=m.get("content", ""))
