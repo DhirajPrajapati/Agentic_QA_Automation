@@ -18,7 +18,10 @@ logger = logging.getLogger(__name__)
 
 CHROMADB_PATH: str = os.getenv("CHROMADB_PATH", "./memory/chromadb")
 
-_client = chromadb.PersistentClient(path=CHROMADB_PATH)
+_client = chromadb.PersistentClient(
+    path=CHROMADB_PATH,
+    settings=chromadb.Settings(anonymized_telemetry=False),
+)
 collection = _client.get_or_create_collection(name="qa_learnings")
 
 
