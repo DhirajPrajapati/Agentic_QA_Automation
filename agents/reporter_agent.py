@@ -73,7 +73,7 @@ def _build_jira_comment(
 
     for tc_id, result in ui_results.items():
         tc = tc_map.get(tc_id, {})
-        flow = tc.get("flow", tc_id)
+        flow = tc.get("flow") or tc.get("module") or tc_id
         status = result["status"]
         if status == "pass":
             icon = "✅"
@@ -128,9 +128,31 @@ def reporter_node(state: QAState) -> QAState:
 
     jira_id = state["jira_id"]
     test_cases = state.get("test_cases") or []
-    tc_map = {tc["id"]: tc for tc in test_cases}
     ui_results = state.get("ui_results") or {}
     api_results = state.get("api_results") or {}
+
+    # Update automation_status based on execution results — fully autonomous,
+    # no human approval gate: status starts as "Auto-Generated" and reflects
+    # the run outcome once playwright_agent has executed the case.
+    updated_cases = []
+    for tc in test_cases:
+        tc_id = tc.get("test_case_id", tc.get("id", ""))
+        result = ui_results.get(tc_id, {})
+        status = result.get("status", "")
+
+        if status == "pass":
+            tc["automation_status"] = "Executed - Passed"
+        elif status == "fail":
+            tc["automation_status"] = "Executed - Failed"
+        elif status == "healed":
+            tc["automation_status"] = "Executed - Healed"
+        else:
+            tc["automation_status"] = "Auto-Generated"
+        updated_cases.append(tc)
+
+    state["test_cases"] = updated_cases
+    test_cases = updated_cases
+    tc_map = {tc.get("test_case_id", tc.get("id", "")): tc for tc in test_cases}
 
     ui_pass = sum(1 for r in ui_results.values() if r["status"] == "pass")
     ui_healed = sum(1 for r in ui_results.values() if r["status"] == "healed")

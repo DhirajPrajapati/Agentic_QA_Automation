@@ -32,6 +32,98 @@ _MINIMAL_API_COLLECTION_STUB = {
     "item": [],
 }
 
+# Fully autonomous — no human approval gate. The {recording}/{test_cases}/
+# {selector_hints} placeholders are substituted below; every other {...}
+# (e.g. {jira_id}, {test_case_id}) is literal instructional text showing the
+# LLM the metadata-comment-block pattern to follow using the real values
+# already present in the {test_cases} JSON — do not str.format() this
+# template as a whole.
+UI_WITH_RECORDING_PROMPT = """You are a senior QA automation engineer.
+You are part of a fully autonomous QA pipeline.
+
+Generate a complete Playwright Python test file using this recording
+as the selector baseline. Do not invent selectors not in the recording.
+
+Recording (real selectors from portal DOM):
+{recording}
+
+Test cases to implement (all Auto-Generated — no approval gate):
+{test_cases}
+
+MANDATORY rules from our Playwright standards:
+
+Locator priority order (follow strictly):
+1. page.get_by_role(...)
+2. page.get_by_label(...)
+3. page.get_by_placeholder(...)
+4. page.get_by_test_id(...) when available
+5. CSS/XPath only if above are unavailable
+
+Assertions — use web-first assertions:
+- expect(page).to_have_url(...)
+- expect(locator).to_have_text(...)
+- expect(locator).to_be_visible()
+- expect(locator).to_be_enabled()
+Assert meaningful business outcomes, not just element presence.
+
+Structure — Arrange Act Assert:
+# Arrange — setup and navigation
+# Act — user actions
+# Assert — verify outcomes
+
+Metadata comment block — add at top of EACH test function:
+# Jira Id: {jira_id}
+# Test Case ID: {test_case_id}
+# Module: {module}
+# Sub-Module: {sub_module}
+# Priority: {priority}
+# Type: {type}
+# Tags: {tags}
+# Automation Status: Auto-Generated
+# Test Case Description: {description}
+# Preconditions:
+#   {preconditions}
+# Expected Results:
+#   {expected_results}
+
+Tagging — use pytest marks:
+@pytest.mark.smoke for Smoke type
+@pytest.mark.functional for Functional type
+@pytest.mark.regression for Regression type
+
+Test independence:
+Each test must be independently executable.
+Do not rely on execution order.
+Use test fixtures for shared state like login.
+
+Do NOT use arbitrary time.sleep() or waitForTimeout.
+Use Playwright auto-waiting and explicit state assertions.
+
+Output: Complete Python Playwright file only.
+No explanation. No markdown. Raw Python code only."""
+
+UI_WITHOUT_RECORDING_PROMPT = """You are a senior QA automation engineer.
+Generate a Playwright Python test file using these UI element hints.
+
+# WARNING: No recording available. Selectors based on documentation hints.
+# Prefer getByRole > getByLabel > getByPlaceholder > getByTestId > CSS
+
+UI element hints from Confluence Section 8:
+{selector_hints}
+
+Test cases:
+{test_cases}
+
+Apply same Playwright standards as always:
+- Arrange Act Assert structure
+- Web-first assertions only
+- Metadata comment block per test function
+- pytest marks: @pytest.mark.smoke / functional / regression
+- Each test independently executable
+- No time.sleep() — use Playwright auto-waiting
+
+Output: Complete Python Playwright file only. Raw code only."""
+
 
 def _extract_user_type_and_module(labels: list[str]) -> tuple[str | None, str | None]:
     """Pick the first known user_type and module present in the Jira labels."""
@@ -54,37 +146,28 @@ def _extract_selector_hints(confluence_context: str) -> str:
 def _build_ui_prompt_with_recording(
     recording_content: str, ui_test_cases: list[dict]
 ) -> list[dict[str, str]]:
-    content = (
-        "You are a QA automation engineer. Given this Playwright recording of a\n"
-        "happy path flow, add the following to it without changing existing selectors:\n"
-        "1. expect() assertions after each navigation step\n"
-        "2. Separate test functions for each negative test case in the test_cases list\n"
-        "   using the SAME selectors as the recording, different test data\n"
-        "3. Add explicit page.wait_for_load_state() where needed\n"
-        f"Recording:\n{recording_content}\n"
-        f"Test cases:\n{json.dumps(ui_test_cases)}\n"
-        "Output: Complete Python Playwright file only. No explanation."
-    )
+    content = UI_WITH_RECORDING_PROMPT.replace(
+        "{recording}", recording_content
+    ).replace("{test_cases}", json.dumps(ui_test_cases))
     return [{"role": "user", "content": content}]
 
 
 def _build_ui_prompt_without_recording(
     selector_hints: str, ui_test_cases: list[dict]
 ) -> list[dict[str, str]]:
-    content = (
-        "Generate a Playwright Python test file for these test cases.\n"
-        f"Use these UI element hints from the portal knowledge base:\n{selector_hints}\n"
-        f"Test cases: {json.dumps(ui_test_cases)}\n"
-        "WARNING: No recording available. Add comment at top of file:\n"
-        f"{_WARNING_COMMENT}"
-    )
+    content = UI_WITHOUT_RECORDING_PROMPT.replace(
+        "{selector_hints}", selector_hints
+    ).replace("{test_cases}", json.dumps(ui_test_cases))
     return [{"role": "user", "content": content}]
 
 
 def _generate_ui_script(state: QAState, user_type: str, module: str) -> str:
     """Generate the Playwright UI script, from a recording when one exists."""
     recording = load_recording(user_type, module)
-    ui_test_cases = [tc for tc in state["test_cases"] if tc.get("type") == "ui"]
+    # The autonomous test_case schema no longer distinguishes ui/api cases
+    # (its "type" field means Smoke/Functional/Regression) — every generated
+    # case is a UI e2e case.
+    ui_test_cases = state["test_cases"]
 
     if recording is not None:
         logger.info(
@@ -107,12 +190,13 @@ def _generate_ui_script(state: QAState, user_type: str, module: str) -> str:
 
 
 def _save_script(user_type: str, module: str, jira_id: str, script: str) -> Path:
-    """Persist the generated script to outputs/scripts/."""
-    output_dir = Path("outputs/scripts")
-    output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / f"{user_type}_{module}_{jira_id}.py"
-    path.write_text(script)
-    return path
+    """Persist the generated script to outputs/e2e/{user_type}/{module}/{jira_id}/v1/."""
+    out_dir = Path(f"outputs/e2e/{user_type}/{module}/{jira_id}/v1")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{module}_{jira_id}_001.spec.py"
+    out_path.write_text(script)
+    logger.info("[test_script] UI script saved: %s", out_path)
+    return out_path
 
 
 def _build_api_prompt(collection: dict, api_test_cases: list[dict]) -> list[dict[str, str]]:
@@ -145,7 +229,10 @@ def _generate_api_collection(state: QAState, user_type: str, module: str) -> dic
         user_type,
         module,
     )
-    api_test_cases = [tc for tc in state["test_cases"] if tc.get("type") == "api"]
+    # The autonomous test_case schema no longer distinguishes ui/api cases —
+    # every generated case is a UI e2e case, so there is nothing to enhance
+    # the collection with beyond the negative-variant pass below.
+    api_test_cases: list[dict] = []
     messages = _build_api_prompt(collection, api_test_cases)
     raw = invoke_with_retry(messages=messages, agent_type="test_script_api")
     try:
@@ -173,8 +260,7 @@ def test_script_node(state: QAState) -> QAState:
             return state
 
         script = _generate_ui_script(state, user_type, module)
-        script_path = _save_script(user_type, module, state["jira_id"], script)
-        logger.info("[test_script] Saved script: %s", script_path)
+        _save_script(user_type, module, state["jira_id"], script)
         state["ui_scripts"] = script
 
         if state.get("api_collection") is None:

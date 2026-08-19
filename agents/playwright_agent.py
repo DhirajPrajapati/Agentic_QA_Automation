@@ -38,7 +38,9 @@ def _write_healed_selector(original: str, healed: str, module: str, element: str
 def _simulate_test_case(tc: dict, module_id: str, healed_map: dict[str, str]) -> dict:
     """Simulate one UI test case execution with a 70/20/10 pass/healed/fail split."""
     status = random.choices(["pass", "healed", "fail"], weights=[70, 20, 10])[0]
-    flow = tc.get("flow", "unknown_flow")
+    # "flow" is the legacy schema key; the autonomous schema has no flow field,
+    # so fall back to module (or test_case_id) to name the simulated selector.
+    flow = tc.get("flow") or tc.get("module") or tc.get("test_case_id", "unknown_flow")
 
     if status == "pass":
         return {"status": "pass", "duration_ms": random.randint(1200, 3500)}
@@ -60,10 +62,11 @@ def _simulate_test_case(tc: dict, module_id: str, healed_map: dict[str, str]) ->
             "healed_selector": healed_selector,
         }
 
+    tc_id = tc.get("test_case_id") or tc.get("id", "unknown")
     return {
         "status": "fail",
         "error": f"Selector not found: .{flow}-container",
-        "screenshot_path": f"outputs/screenshots/{tc['id']}_fail.png",
+        "screenshot_path": f"outputs/screenshots/{tc_id}_fail.png",
     }
 
 
@@ -84,14 +87,18 @@ def playwright_node(state: QAState) -> QAState:
         healed_map = get_healed_selectors(module_id)
         logger.info("[playwright] Loaded %d previously healed selectors", len(healed_map))
 
-        ui_test_cases = [tc for tc in state["test_cases"] if tc.get("type") == "ui"]
+        # The autonomous test_case schema no longer distinguishes ui/api cases
+        # (its "type" field means Smoke/Functional/Regression) — every
+        # generated case is a UI e2e case.
+        ui_test_cases = state["test_cases"]
         ui_results: dict[str, dict] = {}
         for tc in ui_test_cases:
+            tc_id = tc.get("test_case_id") or tc.get("id", "unknown")
             result = _simulate_test_case(tc, module_id, healed_map)
-            ui_results[tc["id"]] = result
+            ui_results[tc_id] = result
             logger.info(
                 "[playwright] %s %s → %s %s",
-                tc["id"],
+                tc_id,
                 tc.get("flow", ""),
                 result["status"].upper(),
                 _STATUS_EMOJI[result["status"]],

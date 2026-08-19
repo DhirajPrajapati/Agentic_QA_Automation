@@ -94,10 +94,16 @@ def test_test_case_mock_matches_expected_schema(llm_client_mock_mode):
     parsed = json.loads(response)
     assert isinstance(parsed, list)
     assert len(parsed) >= 2
-    required_keys = {"id", "flow", "priority", "given", "when", "then", "type"}
+    required_keys = {
+        "jira_id", "test_case_id", "module", "sub_module", "priority", "type",
+        "test_case_description", "preconditions", "test_steps", "expected_results",
+        "postconditions", "tags", "automation_status", "remarks", "scenario_nature",
+        "negative_category",
+    }
     for tc in parsed:
         assert required_keys <= tc.keys()
-    assert any(tc["priority"] == "P1" for tc in parsed)
+    assert any(tc["priority"] == "HIGH" for tc in parsed)
+    assert all(tc["automation_status"] == "Auto-Generated" for tc in parsed)
 
 
 def test_real_mode_uses_openai_when_key_present(monkeypatch):

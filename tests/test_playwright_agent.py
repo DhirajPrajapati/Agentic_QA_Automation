@@ -57,19 +57,22 @@ def test_fail_reports_error_and_screenshot_path(monkeypatch):
     assert result["screenshot_path"] == "outputs/screenshots/TC-003_fail.png"
 
 
-def test_excludes_non_ui_test_cases(monkeypatch):
+def test_runs_every_generated_test_case(monkeypatch):
+    # The autonomous test_case schema no longer distinguishes ui/api cases
+    # ("type" now means Smoke/Functional/Regression) — every generated case
+    # is executed as a UI e2e case.
     monkeypatch.setenv("USE_MOCK", "true")
     monkeypatch.setattr(playwright_agent.random, "choices", lambda *a, **k: ["pass"])
 
     state = _base_state(
         [
-            {"id": "TC-001", "flow": "standard_login", "type": "ui"},
-            {"id": "TC-004", "flow": "otp_verify", "type": "api"},
+            {"test_case_id": "TC-001", "module": "standard_login", "type": "Smoke"},
+            {"test_case_id": "TC-004", "module": "otp_verify", "type": "Regression"},
         ]
     )
     state = playwright_agent.playwright_node(state)
 
-    assert set(state["ui_results"].keys()) == {"TC-001"}
+    assert set(state["ui_results"].keys()) == {"TC-001", "TC-004"}
 
 
 def test_sets_status_ui_complete(monkeypatch):

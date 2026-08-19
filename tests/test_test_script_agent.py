@@ -37,7 +37,7 @@ def test_ui_scripts_generated_with_test_functions(monkeypatch):
 
 def test_script_saved_to_outputs_dir(monkeypatch):
     state = _scripted_state(monkeypatch)
-    path = Path("outputs/scripts/investor_login_PROJ-123.py")
+    path = Path("outputs/e2e/investor/login/PROJ-123/v1/login_PROJ-123_001.spec.py")
     assert path.exists()
     assert path.read_text() == state["ui_scripts"]
 
