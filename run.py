@@ -23,13 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 def find_newest_script(jira_id: str) -> Optional[Path]:
-    """Find the most recently written outputs/scripts/*_{jira_id}.py file.
+    """Find the most recently written outputs/e2e/**/*_{jira_id}_*.spec.py file.
 
     Multiple stale files can match the same jira_id across runs (e.g. the
     resolved module changed) — the newest one is always the one this run
     (or the most recent run) just wrote.
     """
-    script_files = list(Path("outputs/scripts").glob(f"*_{jira_id}.py"))
+    script_files = list(Path("outputs/e2e").rglob(f"*_{jira_id}_*.spec.py"))
     if not script_files:
         return None
     return max(script_files, key=lambda p: p.stat().st_mtime)

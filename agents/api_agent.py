@@ -17,24 +17,20 @@ logger = logging.getLogger(__name__)
 
 
 def _mock_api_results(state: QAState) -> dict:
-    """Generate realistic mock Newman-style results for every API test case."""
+    """Generate realistic mock Newman-style results for every request in the collection."""
     mock_results: dict[str, dict] = {}
-    api_cases = [tc for tc in state["test_cases"] if tc["type"] == "api"]
-    for tc in api_cases:
-        mock_results[tc["id"]] = {
-            "name": tc["flow"],
+    collection = state.get("api_collection") or {}
+    items = collection.get("item", [])
+    for i, item in enumerate(items):
+        tc_id = f"API-{i + 1:03d}"
+        name = item.get("name", f"Request {i + 1}")
+        is_negative = any(k in name.lower() for k in ["invalid", "expired", "wrong", "bad"])
+        mock_results[tc_id] = {
+            "name": name,
             "status": "pass",
             "response_time_ms": random.randint(180, 450),
-            "status_code": 200,
-            "endpoint": f"POST /api/v1/{tc['flow'].replace('_', '/')}",
+            "status_code": 401 if is_negative else 200,
         }
-
-    neg_cases = [tc for tc in api_cases if tc["priority"] == "P2"]
-    if neg_cases:
-        tc = neg_cases[0]
-        mock_results[tc["id"]]["status_code"] = 401
-        mock_results[tc["id"]]["status"] = "pass"  # 401 was expected
-
     return mock_results
 
 

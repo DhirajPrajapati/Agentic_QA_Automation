@@ -15,8 +15,6 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-USE_MOCK: bool = os.getenv("USE_MOCK", "true").lower() == "true"
-
 _MODULE_MAP_PATH = Path("config/module_map.json")
 
 
@@ -37,7 +35,7 @@ def resolve_page_ids(labels: list[str]) -> list[str]:
 
 def get_page_by_id(page_id: str) -> str:
     """Fetch a Confluence page's plain text content by page id."""
-    if USE_MOCK:
+    if os.getenv("USE_MOCK", "true").lower() == "true":
         path = Path(f"mock_data/confluence/{page_id}.txt")
         logger.info("[confluence_client] Loading mock page: %s", path)
         return path.read_text()

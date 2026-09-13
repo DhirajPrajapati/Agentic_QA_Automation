@@ -15,12 +15,10 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-USE_MOCK: bool = os.getenv("USE_MOCK", "true").lower() == "true"
-
 
 def get_ticket(jira_id: str) -> dict:
     """Fetch a Jira ticket by id. Loads from mock_data/jira when USE_MOCK=true."""
-    if USE_MOCK:
+    if os.getenv("USE_MOCK", "true").lower() == "true":
         path = Path(f"mock_data/jira/{jira_id}.json")
         logger.info("[jira_client] Loading mock ticket: %s", path)
         return json.loads(path.read_text())
@@ -38,7 +36,7 @@ def get_ticket(jira_id: str) -> dict:
 
 def post_comment(jira_id: str, comment: str) -> None:
     """Post a comment on a Jira ticket. Logs instead of posting when USE_MOCK=true."""
-    if USE_MOCK:
+    if os.getenv("USE_MOCK", "true").lower() == "true":
         logger.info("[jira] MOCK: would post comment to %s", jira_id)
         return
 
@@ -207,7 +205,7 @@ def attach_file_to_ticket(
     Returns:
         True if attachment succeeded, False if failed
     """
-    if USE_MOCK:
+    if os.getenv("USE_MOCK", "true").lower() == "true":
         attach_dir = Path("outputs/attachments")
         attach_dir.mkdir(parents=True, exist_ok=True)
         dest = attach_dir / f"{jira_id}_{file_name}"
