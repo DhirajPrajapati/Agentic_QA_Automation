@@ -582,10 +582,10 @@ Subject: QA Report: PROJ-123 — All tests passed
 ## Phase 6 — Server Deployment (Optional)
 **Goal:** 24/7 operation. Office laptop not required.
 
-- [ ] Create `Dockerfile` for Python app
-- [ ] Create `docker-compose.yml` — app + ChromaDB server containers
-- [ ] Move self-hosted runner to server
-- [ ] Secure env vars on server (not `.env` file)
+- [x] Create `Dockerfile` for Python app
+- [x] Create `docker-compose.yml` — app + ChromaDB server containers
+- [x] Move self-hosted runner to server (runner service in docker-compose.yml)
+- [x] Secure env vars on server (`${VAR}` substitution; no secrets in compose file)
 - [ ] Run 5 consecutive automated runs without manual intervention
 - [ ] Verify ChromaDB persists between restarts
 

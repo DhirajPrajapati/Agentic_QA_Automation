@@ -1,8 +1,8 @@
 """
 chromadb_client — Persistent vector memory for past failures and healed selectors.
 Part of: QA Orchestrator
-Phase: 3
-Mock-safe: n/a (ChromaDB is always real, local-only, no credentials needed)
+Phase: 6
+Mock-safe: n/a (ChromaDB is always real; PersistentClient locally, HttpClient in Docker)
 """
 import logging
 import os
@@ -18,10 +18,26 @@ logger = logging.getLogger(__name__)
 
 CHROMADB_PATH: str = os.getenv("CHROMADB_PATH", "./memory/chromadb")
 
-_client = chromadb.PersistentClient(
-    path=CHROMADB_PATH,
-    settings=chromadb.Settings(anonymized_telemetry=False),
-)
+
+def _create_client() -> chromadb.ClientAPI:
+    """Build the ChromaDB client.
+
+    When CHROMADB_HOST is set (Docker / server deployment) an HttpClient
+    pointing at the chroma container is returned.  Otherwise a local
+    PersistentClient is used (dev laptop, CI).
+    """
+    host = os.getenv("CHROMADB_HOST")
+    if host:
+        port = int(os.getenv("CHROMADB_PORT", "8000"))
+        logger.info("[chromadb] Using remote server at %s:%d", host, port)
+        return chromadb.HttpClient(host=host, port=port)
+    return chromadb.PersistentClient(
+        path=CHROMADB_PATH,
+        settings=chromadb.Settings(anonymized_telemetry=False),
+    )
+
+
+_client = _create_client()
 collection = _client.get_or_create_collection(name="qa_learnings")
 
 

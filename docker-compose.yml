@@ -1,0 +1,110 @@
+# QA Orchestrator — Docker Compose
+# Phase 6: server deployment (24/7 operation without an office laptop)
+#
+# Services
+# ─────────
+# chroma   — ChromaDB HTTP server; data persists in the 'chroma_data' volume.
+#            Starts automatically with 'docker compose up -d'.
+#
+# qa-app   — One-shot pipeline run.  Use 'docker compose run' (not 'up'):
+#              docker compose run --rm qa-app --jira PROJ-123
+#            The container exits after the run completes.
+#
+# runner   — Optional GitHub Actions self-hosted runner that triggers the
+#            pipeline via CI.  Uncomment and configure the GITHUB_* vars
+#            (see the runner service section below) to enable it.
+#
+# Quick start
+# ───────────
+# 1. cp .env.example .env  →  fill in all real values
+# 2. docker compose up -d chroma          # start the DB
+# 3. docker compose run --rm qa-app --jira PROJ-123
+
+services:
+
+  # ── ChromaDB server ──────────────────────────────────────────────────────────
+  chroma:
+    image: chromadb/chroma:latest     # pin to a specific tag for production
+    restart: unless-stopped
+    environment:
+      ANONYMIZED_TELEMETRY: "False"
+    volumes:
+      - chroma_data:/chroma/chroma    # survives container restarts/upgrades
+    ports:
+      - "8000:8000"                   # expose only if direct host access is needed
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/v1/heartbeat"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── QA pipeline (one-shot) ───────────────────────────────────────────────────
+  qa-app:
+    build: .
+    depends_on:
+      chroma:
+        condition: service_healthy
+    environment:
+      # Mode — always real in Docker
+      USE_MOCK: "false"
+      USE_MOCK_LLM: "false"
+      # ChromaDB — point at the chroma service
+      CHROMADB_HOST: chroma
+      CHROMADB_PORT: "8000"
+      # LLM provider — pass via --env-file or CI secrets, never hardcode
+      LLM_PROVIDER: ${LLM_PROVIDER:-azure}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_DEPLOYMENT_NAME: ${AZURE_OPENAI_DEPLOYMENT_NAME:-gpt-4o}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-02-01}
+      AZURE_AUTH_MODE: ${AZURE_AUTH_MODE:-gateway}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ORG_LLM_ENDPOINT: ${ORG_LLM_ENDPOINT:-}
+      # Jira + Confluence
+      JIRA_BASE_URL: ${JIRA_BASE_URL:-}
+      JIRA_EMAIL: ${JIRA_EMAIL:-}
+      JIRA_API_TOKEN: ${JIRA_API_TOKEN:-}
+      CONFLUENCE_BASE_URL: ${CONFLUENCE_BASE_URL:-}
+      CONFLUENCE_EMAIL: ${CONFLUENCE_EMAIL:-}
+      CONFLUENCE_API_TOKEN: ${CONFLUENCE_API_TOKEN:-}
+      # UAT environment
+      UAT_BASE_URL: ${UAT_BASE_URL:-}
+      # Email reporting
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      EMAIL_RECIPIENTS: ${EMAIL_RECIPIENTS:-}
+    volumes:
+      # Runtime inputs (read-only inside the container)
+      - ./recordings:/app/recordings:ro
+      - ./postman_collections:/app/postman_collections:ro
+      - ./config:/app/config:ro
+      - ./mock_data:/app/mock_data:ro
+      # Runtime outputs (writable — persisted on the host)
+      - ./outputs:/app/outputs
+
+  # ── GitHub Actions self-hosted runner (optional) ─────────────────────────────
+  # Uncomment this service to host the CI runner alongside the pipeline.
+  # The runner picks up workflow jobs and invokes the pipeline inside the
+  # container via 'docker compose run qa-app --jira $JIRA_ID'.
+  #
+  # Required secrets (set in your shell or a secrets manager — NOT in .env):
+  #   GITHUB_ACCESS_TOKEN  — fine-grained PAT with 'Actions: write' permission
+  #   RUNNER_REPO          — e.g. https://github.com/your-org/qa-orchestrator
+  #
+  # runner:
+  #   image: myoung34/github-runner:latest
+  #   restart: unless-stopped
+  #   environment:
+  #     ACCESS_TOKEN: ${GITHUB_ACCESS_TOKEN}
+  #     REPO_URL: ${RUNNER_REPO}
+  #     RUNNER_NAME: qa-docker-runner
+  #     RUNNER_WORKDIR: /tmp/runner
+  #     LABELS: self-hosted,qa-docker
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock   # Docker-in-Docker
+  #     - runner_work:/tmp/runner
+
+volumes:
+  chroma_data:
+  # runner_work:    # uncomment with the runner service above
