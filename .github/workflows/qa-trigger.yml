@@ -1,0 +1,105 @@
+name: QA Orchestrator
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - uat
+  # Manual trigger for ad-hoc runs or testing without a PR
+  workflow_dispatch:
+    inputs:
+      jira_id:
+        description: "Jira ticket ID (e.g. PROJ-123)"
+        required: true
+        type: string
+
+jobs:
+  qa-run:
+    name: Agentic QA Pipeline
+    runs-on: self-hosted
+    # For PR events: only run when the PR was actually merged (not just closed)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Seed ChromaDB with known issues (idempotent)
+        run: python scripts/seed_chromadb.py
+
+      - name: Extract Jira ID
+        id: jira
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "jira_id=${{ inputs.jira_id }}" >> $GITHUB_OUTPUT
+          else
+            JIRA_ID=$(echo "${{ github.event.pull_request.title }}" | grep -oE '[A-Z]+-[0-9]+' | head -1)
+            echo "jira_id=$JIRA_ID" >> $GITHUB_OUTPUT
+            echo "Extracted Jira ID: $JIRA_ID"
+          fi
+
+      - name: Warn — no Jira ID in PR title
+        if: steps.jira.outputs.jira_id == ''
+        run: |
+          echo "::warning::No Jira ID found in PR title '${{ github.event.pull_request.title }}'."
+          echo "Name PRs like 'PROJ-123: fix description' so the pipeline can pick up the ticket."
+
+      - name: Run QA Pipeline
+        if: steps.jira.outputs.jira_id != ''
+        env:
+          USE_MOCK: "false"
+          USE_MOCK_LLM: "false"
+          # LLM provider — set LLM_PROVIDER=azure (default), openai, or org_gateway
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER || 'azure' }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ vars.AZURE_OPENAI_DEPLOYMENT_NAME || 'gpt-4o' }}
+          AZURE_OPENAI_API_VERSION: ${{ vars.AZURE_OPENAI_API_VERSION || '2024-02-01' }}
+          AZURE_AUTH_MODE: ${{ vars.AZURE_AUTH_MODE || 'gateway' }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ORG_LLM_ENDPOINT: ${{ secrets.ORG_LLM_ENDPOINT }}
+          # Jira + Confluence
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+          CONFLUENCE_BASE_URL: ${{ secrets.CONFLUENCE_BASE_URL }}
+          CONFLUENCE_EMAIL: ${{ secrets.CONFLUENCE_EMAIL }}
+          CONFLUENCE_API_TOKEN: ${{ secrets.CONFLUENCE_API_TOKEN }}
+          # UAT environment
+          UAT_BASE_URL: ${{ secrets.UAT_BASE_URL }}
+          # Email reporting
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+          # ChromaDB — persists across runs on self-hosted runner
+          CHROMADB_PATH: ./memory/chromadb
+        run: python run.py --jira ${{ steps.jira.outputs.jira_id }}
+
+      - name: Upload test artifacts
+        if: always() && steps.jira.outputs.jira_id != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-outputs-${{ steps.jira.outputs.jira_id }}
+          path: |
+            outputs/e2e/
+            outputs/reports/
+            outputs/screenshots/
+            outputs/attachments/
+          retention-days: 30
+          if-no-files-found: ignore

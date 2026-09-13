@@ -1,7 +1,7 @@
 """
-test_playwright_agent — Tests for agents/playwright_agent.py (mock execution).
+test_playwright_agent — Tests for agents/playwright_agent.py (mock + Phase 5 helpers).
 Part of: QA Orchestrator
-Phase: 2
+Phase: 5
 Mock-safe: yes
 """
 import agents.playwright_agent as playwright_agent
@@ -103,13 +103,60 @@ def test_uses_weighted_random_pass_healed_fail(monkeypatch):
     assert captured["weights"] == [70, 20, 10]
 
 
-def test_real_mode_logs_warning_and_still_returns_results(monkeypatch, caplog):
+def test_real_mode_calls_run_real_tests(monkeypatch):
+    # When USE_MOCK=false, playwright_node delegates to _run_real_tests,
+    # not the random simulation path.
     monkeypatch.setenv("USE_MOCK", "false")
-    monkeypatch.setattr(playwright_agent.random, "choices", lambda *a, **k: ["pass"])
+    called = {}
 
-    state = _base_state([{"id": "TC-001", "flow": "standard_login", "type": "ui"}])
-    with caplog.at_level("WARNING"):
-        state = playwright_agent.playwright_node(state)
+    def fake_run_real(state, module_id):
+        called["invoked"] = True
+        return {"TC-001": {"status": "pass", "duration_ms": 1500}}
 
-    assert "TC-001" in state["ui_results"]
-    assert any("Phase 5" in record.message for record in caplog.records)
+    monkeypatch.setattr(playwright_agent, "_run_real_tests", fake_run_real)
+
+    state = _base_state([{"test_case_id": "TC-001", "module": "standard_login", "type": "Smoke"}])
+    state = playwright_agent.playwright_node(state)
+
+    assert called.get("invoked") is True
+    assert state["ui_results"]["TC-001"]["status"] == "pass"
+    assert state["status"] == "ui_complete"
+
+
+def test_extract_failed_selector_from_locator_call():
+    from agents.playwright_agent import _extract_failed_selector
+    error = "playwright._impl._errors.TimeoutError: locator('input[name=\"email\"]') exceeded timeout"
+    assert _extract_failed_selector(error) == 'input[name="email"]'
+
+
+def test_extract_failed_selector_from_fill_call():
+    from agents.playwright_agent import _extract_failed_selector
+    error = "Error in fill('.login-btn', 'value'): element not found"
+    assert _extract_failed_selector(error) == ".login-btn"
+
+
+def test_extract_failed_selector_returns_none_when_no_match():
+    from agents.playwright_agent import _extract_failed_selector
+    assert _extract_failed_selector("Generic network error, no selector") is None
+
+
+def test_extract_selector_section_returns_section_8():
+    from agents.playwright_agent import _extract_selector_section
+    text = "7. API ENDPOINTS\nsome api\n8. UI ELEMENT HINTS\n- Email: input[name='email']\n9. TEST DATA\nsome data"
+    result = _extract_selector_section(text)
+    assert "input[name='email']" in result
+    assert "TEST DATA" not in result
+
+
+def test_extract_selector_section_falls_back_when_missing():
+    from agents.playwright_agent import _extract_selector_section
+    text = "x" * 2000
+    result = _extract_selector_section(text)
+    assert len(result) <= 1500
+
+
+def test_find_spec_file_returns_none_when_no_match(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "outputs" / "e2e").mkdir(parents=True)
+    from agents.playwright_agent import _find_spec_file
+    assert _find_spec_file("PROJ-999") is None
